@@ -15,6 +15,7 @@ public class DataSourceConfig {
         dataSourceBuilder.url("jdbc:postgresql://localhost:5432/inventory-service");
         dataSourceBuilder.username("postgres");
         dataSourceBuilder.password("postgres");
+        dataSourceBuilder.driverClassName("org.postgresql.Driver");
         return dataSourceBuilder.build();
     }
 }
