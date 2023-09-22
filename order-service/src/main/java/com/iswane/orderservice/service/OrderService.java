@@ -1,5 +1,6 @@
 package com.iswane.orderservice.service;
 
+import com.iswane.orderservice.dto.InventoryResponse;
 import com.iswane.orderservice.dto.OrderLineItemsDTO;
 import com.iswane.orderservice.dto.OrderRequest;
 import com.iswane.orderservice.model.Order;
@@ -7,7 +8,9 @@ import com.iswane.orderservice.model.OrderLineItems;
 import com.iswane.orderservice.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -16,7 +19,10 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OrderService {
 
+    private static final String URL_INVENTORY_SERVICE = "http://localhost:8092/api/v1/inventory";
     private final OrderRepository orderRepository;
+    private final WebClient webClient;
+
 
     public void placeOrder(OrderRequest orderRequest) {
         List<OrderLineItems> orderLineItems = orderRequest.getOrderLineItems()
@@ -28,7 +34,26 @@ public class OrderService {
                 .orderNumber(UUID.randomUUID().toString())
                 .orderLineItems(orderLineItems)
                 .build();
-        orderRepository.save(order);
+
+        List<String> skuCodes = orderRequest.getOrderLineItems()
+                .stream()
+                .map(OrderLineItemsDTO::getSkuCode)
+                .toList();
+
+        InventoryResponse[] inventoryResponses = webClient.get()
+                .uri(URL_INVENTORY_SERVICE, uriBuilder -> uriBuilder.queryParam("skuCodes", skuCodes).build())
+                .retrieve()
+                .bodyToMono(InventoryResponse[].class)
+                .block();
+        assert inventoryResponses != null;
+        boolean allProductsInStock = Arrays.stream(inventoryResponses)
+                .allMatch(InventoryResponse::isInStock);
+
+        if (allProductsInStock) {
+            orderRepository.save(order);
+        } else {
+            throw new IllegalArgumentException("Product is not in stock, please try again later.");
+        }
     }
 
     private OrderLineItems mapToOrderLineItems(OrderLineItemsDTO orderLineItemsDTO) {

@@ -18,5 +18,6 @@ services:
     environment:
       - 'MYSQL_DATABASE=order-service'
       - 'MYSQL_ROOT_PASSWORD=mysql'
+      - 'MYSQL_ROOT_USER=root'
     ports:
       - '3307:3306'
