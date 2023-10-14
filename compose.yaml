@@ -1,28 +1,52 @@
 services:
-  mongodb:
-    image: 'mongo:latest'
+  ## Mongo Database Product Service
+  mongo:
+    container_name: mongo
+    image: mongo:latest
+    restart: unless-stopped
     environment:
-      - 'MONGO_INITDB_DATABASE=product-service'
+      MONGO_INITDB_DATABASE: product-service
     ports:
-      - '27017'
-  postgres:
-    image: 'postgres:latest'
-    environment:
-      - 'POSTGRES_DB=inventory-service'
-      - 'POSTGRES_PASSWORD=postgres'
-      - 'POSTGRES_USER=postgres'
-    ports:
-      - '5432:5432'
-  mysql:
-    image: 'mysql:latest'
-    environment:
-      - 'MYSQL_DATABASE=order-service'
-      - 'MYSQL_ROOT_PASSWORD=mysql'
-      - 'MYSQL_ROOT_USER=root'
-    ports:
-      - '3307:3306'
+      - "27017:27017"
+    expose:
+      - "27017"
+    volumes:
+      - ./mongo-data:/data/db
 
-  ## Keycloak Config with Mysql database
+  ## Postgres Database Order Service
+  postgres-order:
+    container_name: postgres-order
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: order-service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /data/postgres
+    volumes:
+      - ./postgres-order:/data/postgres
+    expose:
+      - "5431"
+    ports:
+      - "5431:5431"
+    command: -p 5431
+    restart: unless-stopped
+
+  ## Postgres Database Inventory Service
+  postgres-inventory:
+    container_name: postgres-inventory
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: inventory-service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /data/postgres
+    volumes:
+      - ./postgres-inventory:/data/postgres
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  ## Mysql Database Keycloak
   keycloak-mysql:
     container_name: keycloak-mysql
     image: mysql:5.7
@@ -34,6 +58,7 @@ services:
       MYSQL_USER: keycloak
       MYSQL_PASSWORD: password
 
+  ## Keycloak Server
   keycloak:
     container_name: keycloak
     image: quay.io/keycloak/keycloak:18.0.0
@@ -47,30 +72,115 @@ services:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
-      - '8181:8080'
+      - "8080:8080"
     volumes:
       - ./realms/:/opt/keycloak/data/import/
     depends_on:
       - keycloak-mysql
 
+  ## Zookeeper Server
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - '22181:2181'
+      - "2181:2181"
 
+  ## Kafka Server
   broker:
     image: confluentinc/cp-kafka:latest
     depends_on:
       - zookeeper
     ports:
-      - '29092:29092'
+      - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  ## Zipkin
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+
+  ## Eureka Server
+  discovery-server:
+    image: laye123/discovery-server:latest
+    container_name: discovery-server
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - zipkin
+
+  ## Api Gateway
+  api-gateway:
+    image: laye123/api-gateway:latest
+    container_name: api-gateway
+    ports:
+      - "8181:8080"
+    expose:
+      - "8181"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY=TRACE
+    depends_on:
+      - zipkin
+      - discovery-server
+      - keycloak
+
+  ## Product Service
+  product-service:
+    container_name: product-service
+    image: laye123/product-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - mongo
+      - discovery-server
+      - api-gateway
+
+  ## Order Service
+  order-service:
+    container_name: order-service
+    image: laye123/order-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-order:5431/order-service
+    depends_on:
+      - postgres-order
+      - broker
+      - zipkin
+      - discovery-server
+      - api-gateway
+
+  ## Inventory Service
+  inventory-service:
+    container_name: inventory-service
+    image: laye123/inventory-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-inventory:5432/inventory-service
+    depends_on:
+      - postgres-inventory
+      - discovery-server
+      - api-gateway
+
+  ## Notification Service
+  notification-service:
+    container_name: notification-service
+    image: laye123/notification-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - zipkin
+      - broker
+      - discovery-server
+      - api-gateway
